@@ -34,7 +34,7 @@ Install the following packages:
 
 ```bash
 sudo apt update
-sudo apt install -y curl tar jq gh
+sudo apt install -y curl tar jq gh git
 ```
 
 ### 3. GitHub CLI authentication
