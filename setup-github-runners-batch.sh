@@ -282,7 +282,7 @@ for REPO in "${REPOS[@]}"; do
         # Pre-cleanup: force remove any stale launchctl entries
         cleanup_macos_service_artifacts "$REPO" "$NAME"
         sleep 1
-        
+
         # Install
         if ! run_service install; then
           echo "First install attempt failed, retrying with cleanup..."
@@ -290,26 +290,28 @@ for REPO in "${REPOS[@]}"; do
           sleep 2
           run_service install || {
             echo "ERROR: Failed to install service after cleanup"
-            return 1
+            exit 1
           }
         fi
-        
+
         # Verify and fix permissions
         if ! verify_and_fix_macos_service; then
           echo "ERROR: Service verification failed"
-          return 1
+          exit 1
         fi
-        
-        run_service start || {
-          echo "ERROR: Failed to start service"
-          echo "Diagnostics:"
-          if [[ -f ".service" ]]; then
-            echo "plist path: $(cat .service)"
-            echo "plist contents:"
-            cat "$(cat .service)" 2>/dev/null || echo "  (unable to read)"
-          fi
-          return 1
-        }
+
+        # svc.sh start uses deprecated `launchctl load`; prefer bootstrap on modern macOS
+        local plist_path user_domain
+        user_domain="gui/$(id -u)"
+        plist_path="$(< .service)"
+        if ! launchctl bootstrap "$user_domain" "$plist_path" 2>/dev/null; then
+          # Fall back to svc.sh start
+          run_service start || {
+            echo "ERROR: Failed to start service via both launchctl bootstrap and svc.sh start"
+            echo "plist: $plist_path"
+            exit 1
+          }
+        fi
       else
         run_service install
         run_service start
