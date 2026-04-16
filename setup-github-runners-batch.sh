@@ -114,6 +114,37 @@ run_service() {
   fi
 }
 
+macos_service_plist_path() {
+  printf '%s/Library/LaunchAgents/actions.runner.%s-%s.%s.plist' \
+    "$HOME" "$OWNER" "$1" "$2"
+}
+
+cleanup_macos_service_artifacts() {
+  local repo_name runner_name plist_path user_domain
+
+  if [[ "$RUNNER_OS" != "osx" ]]; then
+    return
+  fi
+
+  repo_name="$1"
+  runner_name="$2"
+  plist_path=""
+  user_domain="gui/$(id -u)"
+
+  if [[ -f ".service" ]]; then
+    plist_path="$(< .service)"
+  else
+    plist_path="$(macos_service_plist_path "$repo_name" "$runner_name")"
+  fi
+
+  if [[ -n "$plist_path" && -f "$plist_path" ]]; then
+    launchctl bootout "$user_domain" "$plist_path" >/dev/null 2>&1 || true
+    rm -f "$plist_path"
+  fi
+
+  rm -f .service
+}
+
 # Dependencies
 for cmd in curl tar gh jq; do
   command -v "$cmd" >/dev/null 2>&1 || {
@@ -162,6 +193,9 @@ for REPO in "${REPOS[@]}"; do
   mkdir -p "$DIR"
   cd "$DIR"
 
+  # Unique name per repo (helps in GitHub UI)
+  NAME="$(hostname)-$REPO"
+
   # If already configured
   if [[ -f ".runner" && "$FORCE" -eq 0 ]]; then
     echo "Already configured in $DIR (found .runner). Skipping."
@@ -176,6 +210,7 @@ for REPO in "${REPOS[@]}"; do
     if [[ "$DO_SERVICE" -eq 1 && -f "./svc.sh" ]]; then
       run_service stop || true
       run_service uninstall || true
+      cleanup_macos_service_artifacts "$REPO" "$NAME"
     fi
 
     # Use remove-token endpoint for clean removal
@@ -196,9 +231,6 @@ for REPO in "${REPOS[@]}"; do
   # Create a short-lived registration token
   TOKEN="$(gh api -X POST "repos/$OWNER/$REPO/actions/runners/registration-token" --jq .token)"
 
-  # Unique name per repo (helps in GitHub UI)
-  NAME="$(hostname)-$REPO"
-
   ./config.sh \
     --unattended \
     --url "https://github.com/$OWNER/$REPO" \
@@ -210,7 +242,14 @@ for REPO in "${REPOS[@]}"; do
 
   if [[ "$DO_SERVICE" -eq 1 ]]; then
     if [[ -f "./svc.sh" ]]; then
-      run_service install
+      if [[ "$RUNNER_OS" == "osx" ]]; then
+        if ! run_service install; then
+          cleanup_macos_service_artifacts "$REPO" "$NAME"
+          run_service install
+        fi
+      else
+        run_service install
+      fi
       run_service start
     else
       echo "Service script not found; runner configured but not installed as a service."
