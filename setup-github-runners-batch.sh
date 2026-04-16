@@ -106,10 +106,13 @@ if [[ -z "$LABELS" ]]; then
   LABELS="self-hosted,${LABEL_OS},${RUNNER_ARCH}"
 fi
 
-SERVICE_CMD=()
-if [[ "$RUNNER_OS" == "linux" ]]; then
-  SERVICE_CMD=(sudo)
-fi
+run_service() {
+  if [[ "$RUNNER_OS" == "linux" ]]; then
+    sudo ./svc.sh "$@"
+  else
+    ./svc.sh "$@"
+  fi
+}
 
 # Dependencies
 for cmd in curl tar gh jq; do
@@ -171,8 +174,8 @@ for REPO in "${REPOS[@]}"; do
     echo "--force: attempting to remove existing runner configuration..."
 
     if [[ "$DO_SERVICE" -eq 1 && -f "./svc.sh" ]]; then
-      "${SERVICE_CMD[@]}" ./svc.sh stop || true
-      "${SERVICE_CMD[@]}" ./svc.sh uninstall || true
+      run_service stop || true
+      run_service uninstall || true
     fi
 
     # Use remove-token endpoint for clean removal
@@ -207,8 +210,8 @@ for REPO in "${REPOS[@]}"; do
 
   if [[ "$DO_SERVICE" -eq 1 ]]; then
     if [[ -f "./svc.sh" ]]; then
-      "${SERVICE_CMD[@]}" ./svc.sh install
-      "${SERVICE_CMD[@]}" ./svc.sh start
+      run_service install
+      run_service start
     else
       echo "Service script not found; runner configured but not installed as a service."
     fi
