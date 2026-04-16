@@ -300,16 +300,25 @@ for REPO in "${REPOS[@]}"; do
           exit 1
         fi
 
-        # svc.sh start uses deprecated `launchctl load`; prefer bootstrap on modern macOS
+        # svc.sh start uses deprecated `launchctl load`; use bootstrap for modern macOS.
+        # When running over SSH (Background session), plain launchctl bootstrap into
+        # gui/UID requires sudo; try both.
         plist_path="$(< .service)"
         user_domain="gui/$(id -u)"
-        if ! launchctl bootstrap "$user_domain" "$plist_path" 2>/dev/null; then
-          # Fall back to svc.sh start
-          run_service start || {
-            echo "ERROR: Failed to start service via both launchctl bootstrap and svc.sh start"
-            echo "plist: $plist_path"
+        if launchctl bootstrap "$user_domain" "$plist_path" 2>/dev/null; then
+          echo "Service started via launchctl bootstrap."
+        elif sudo launchctl bootstrap "$user_domain" "$plist_path" 2>/dev/null; then
+          echo "Service started via sudo launchctl bootstrap."
+        else
+          echo "WARNING: launchctl bootstrap failed (possibly already loaded); checking service status..."
+          if launchctl list 2>/dev/null | grep -qF "$(basename "$plist_path" .plist)"; then
+            echo "Service is already running — OK."
+          else
+            echo "ERROR: Failed to start service. If running over SSH, try logging in"
+            echo "  directly on the Mac and re-running with --force, or run:"
+            echo "  sudo launchctl bootstrap $user_domain $plist_path"
             exit 1
-          }
+          fi
         fi
       else
         run_service install
