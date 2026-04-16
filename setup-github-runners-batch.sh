@@ -138,7 +138,8 @@ cleanup_macos_service_artifacts() {
   fi
 
   if [[ -n "$plist_path" && -f "$plist_path" ]]; then
-    launchctl bootout "$user_domain" "$plist_path" >/dev/null 2>&1 || true
+    # Use asuser so bootout works from SSH (where gui/UID domain may not be visible)
+    sudo launchctl asuser "$(id -u)" launchctl bootout "$user_domain" "$plist_path" >/dev/null 2>&1 || true
     rm -f "$plist_path"
   fi
 
@@ -300,23 +301,23 @@ for REPO in "${REPOS[@]}"; do
           exit 1
         fi
 
-        # svc.sh start uses deprecated `launchctl load`; use bootstrap for modern macOS.
-        # When running over SSH (Background session), plain launchctl bootstrap into
-        # gui/UID requires sudo; try both.
+        # svc.sh start uses deprecated `launchctl load` which fails on modern macOS.
+        # Use `sudo launchctl asuser UID` so bootstrap works from SSH sessions
+        # where the gui/UID domain is not visible to the calling process.
         plist_path="$(< .service)"
-        user_domain="gui/$(id -u)"
-        if launchctl bootstrap "$user_domain" "$plist_path" 2>/dev/null; then
+        uid="$(id -u)"
+        user_domain="gui/$uid"
+        svc_label="$(basename "$plist_path" .plist)"
+        if sudo launchctl asuser "$uid" launchctl bootstrap "$user_domain" "$plist_path" 2>/dev/null; then
           echo "Service started via launchctl bootstrap."
-        elif sudo launchctl bootstrap "$user_domain" "$plist_path" 2>/dev/null; then
-          echo "Service started via sudo launchctl bootstrap."
         else
-          echo "WARNING: launchctl bootstrap failed (possibly already loaded); checking service status..."
-          if launchctl list 2>/dev/null | grep -qF "$(basename "$plist_path" .plist)"; then
+          # It may have already been bootstrapped (e.g. from a previous partial run)
+          if sudo launchctl asuser "$uid" launchctl list 2>/dev/null | grep -qF "$svc_label"; then
             echo "Service is already running — OK."
           else
-            echo "ERROR: Failed to start service. If running over SSH, try logging in"
-            echo "  directly on the Mac and re-running with --force, or run:"
-            echo "  sudo launchctl bootstrap $user_domain $plist_path"
+            echo "ERROR: Failed to start service."
+            echo "Try running on the Mac directly (not over SSH) or:"
+            echo "  sudo launchctl asuser $uid launchctl bootstrap $user_domain $plist_path"
             exit 1
           fi
         fi
