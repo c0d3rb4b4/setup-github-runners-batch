@@ -16,10 +16,11 @@ Required:
 Options:
   -b BASE_DIR         Base directory to place runner folders
                       (default: $HOME/github-runners)
-  -l LABELS           Runner labels (default: self-hosted,linux,x64)
+  -l LABELS           Runner labels
+                      (default: self-hosted,<auto-os>,<auto-arch>)
   -v VERSION          actions/runner version (default: 2.319.1)
   -w WORK_DIR         Work folder name inside each runner dir (default: _work)
-  --no-service        Only configure; do not install/start systemd service
+  --no-service        Only configure; do not install/start runner service
   --force             Reconfigure even if already configured (removes existing config)
   -h                  Help
 
@@ -30,10 +31,49 @@ Examples:
 EOF
 }
 
+detect_platform() {
+  local uname_s uname_m
+
+  uname_s="$(uname -s)"
+  uname_m="$(uname -m)"
+
+  case "$uname_s" in
+    Linux)
+      RUNNER_OS="linux"
+      LABEL_OS="linux"
+      ;;
+    Darwin)
+      RUNNER_OS="osx"
+      LABEL_OS="macos"
+      ;;
+    *)
+      echo "ERROR: Unsupported OS: $uname_s"
+      echo "Supported OSes: Linux, macOS"
+      exit 1
+      ;;
+  esac
+
+  case "$uname_m" in
+    x86_64|amd64)
+      RUNNER_ARCH="x64"
+      ;;
+    arm64|aarch64)
+      RUNNER_ARCH="arm64"
+      ;;
+    *)
+      echo "ERROR: Unsupported architecture: $uname_m"
+      echo "Supported architectures: x86_64/amd64, arm64/aarch64"
+      exit 1
+      ;;
+  esac
+
+  RUNNER_ASSET_BASENAME="actions-runner-${RUNNER_OS}-${RUNNER_ARCH}-${RUNNER_VERSION}"
+}
+
 OWNER=""
 REPOS_RAW=""
 BASE="$HOME/github-runners"
-LABELS="self-hosted,linux,x64"
+LABELS=""
 RUNNER_VERSION="2.319.1"
 WORK_DIR="_work"
 DO_SERVICE=1
@@ -60,11 +100,18 @@ if [[ -z "$OWNER" || -z "$REPOS_RAW" ]]; then
   exit 1
 fi
 
+detect_platform
+
+if [[ -z "$LABELS" ]]; then
+  LABELS="self-hosted,${LABEL_OS},${RUNNER_ARCH}"
+fi
+
 # Dependencies
 for cmd in curl tar gh jq; do
   command -v "$cmd" >/dev/null 2>&1 || {
     echo "ERROR: Missing dependency: $cmd"
     echo "Ubuntu/Debian: sudo apt update && sudo apt install -y gh jq curl tar"
+    echo "macOS (Homebrew): brew install gh jq"
     exit 1
   }
 done
@@ -88,13 +135,13 @@ fi
 
 # Cache runner tarball once
 CACHE_DIR="$BASE/_runner_cache/$RUNNER_VERSION"
-RUNNER_TGZ="$CACHE_DIR/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
+RUNNER_TGZ="$CACHE_DIR/${RUNNER_ASSET_BASENAME}.tar.gz"
 mkdir -p "$CACHE_DIR"
 
 if [[ ! -f "$RUNNER_TGZ" ]]; then
-  echo "Downloading actions/runner v$RUNNER_VERSION into cache..."
+  echo "Downloading actions/runner v$RUNNER_VERSION for ${RUNNER_OS}/${RUNNER_ARCH} into cache..."
   curl -fsSL -o "$RUNNER_TGZ" \
-    "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz"
+    "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_ASSET_BASENAME}.tar.gz"
 fi
 
 for REPO in "${REPOS[@]}"; do
@@ -154,10 +201,14 @@ for REPO in "${REPOS[@]}"; do
     --replace
 
   if [[ "$DO_SERVICE" -eq 1 ]]; then
-    sudo ./svc.sh install
-    sudo ./svc.sh start
+    if [[ -f "./svc.sh" ]]; then
+      sudo ./svc.sh install
+      sudo ./svc.sh start
+    else
+      echo "Service script not found; runner configured but not installed as a service."
+    fi
   else
-    echo "(--no-service) Not installing/starting systemd service."
+    echo "(--no-service) Not installing/starting runner service."
   fi
 
   echo "Runner for $OWNER/$REPO done."
