@@ -301,9 +301,8 @@ for REPO in "${REPOS[@]}"; do
         fi
 
         # svc.sh start uses deprecated `launchctl load`; prefer bootstrap on modern macOS
-        local plist_path user_domain
-        user_domain="gui/$(id -u)"
         plist_path="$(< .service)"
+        user_domain="gui/$(id -u)"
         if ! launchctl bootstrap "$user_domain" "$plist_path" 2>/dev/null; then
           # Fall back to svc.sh start
           run_service start || {
