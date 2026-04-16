@@ -145,6 +145,42 @@ cleanup_macos_service_artifacts() {
   rm -f .service
 }
 
+verify_and_fix_macos_service() {
+  local plist_path user_domain
+
+  if [[ "$RUNNER_OS" != "osx" ]]; then
+    return 0
+  fi
+
+  user_domain="gui/$(id -u)"
+  
+  if [[ -f ".service" ]]; then
+    plist_path="$(< .service)"
+  else
+    return 0
+  fi
+
+  if [[ ! -f "$plist_path" ]]; then
+    echo "ERROR: plist file not found at $plist_path"
+    return 1
+  fi
+
+  # Fix permissions on plist
+  chmod 644 "$plist_path"
+
+  # Verify runsvc.sh exists and is executable
+  if [[ ! -x "./runsvc.sh" ]]; then
+    if [[ -f "./runsvc.sh" ]]; then
+      chmod +x ./runsvc.sh
+    else
+      echo "ERROR: runsvc.sh not found in $(pwd)"
+      return 1
+    fi
+  fi
+
+  return 0
+}
+
 # Dependencies
 for cmd in curl tar gh jq; do
   command -v "$cmd" >/dev/null 2>&1 || {
@@ -243,14 +279,41 @@ for REPO in "${REPOS[@]}"; do
   if [[ "$DO_SERVICE" -eq 1 ]]; then
     if [[ -f "./svc.sh" ]]; then
       if [[ "$RUNNER_OS" == "osx" ]]; then
+        # Pre-cleanup: force remove any stale launchctl entries
+        cleanup_macos_service_artifacts "$REPO" "$NAME"
+        sleep 1
+        
+        # Install
         if ! run_service install; then
+          echo "First install attempt failed, retrying with cleanup..."
           cleanup_macos_service_artifacts "$REPO" "$NAME"
-          run_service install
+          sleep 2
+          run_service install || {
+            echo "ERROR: Failed to install service after cleanup"
+            return 1
+          }
         fi
+        
+        # Verify and fix permissions
+        if ! verify_and_fix_macos_service; then
+          echo "ERROR: Service verification failed"
+          return 1
+        fi
+        
+        run_service start || {
+          echo "ERROR: Failed to start service"
+          echo "Diagnostics:"
+          if [[ -f ".service" ]]; then
+            echo "plist path: $(cat .service)"
+            echo "plist contents:"
+            cat "$(cat .service)" 2>/dev/null || echo "  (unable to read)"
+          fi
+          return 1
+        }
       else
         run_service install
+        run_service start
       fi
-      run_service start
     else
       echo "Service script not found; runner configured but not installed as a service."
     fi
